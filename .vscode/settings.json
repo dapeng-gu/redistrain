@@ -1,0 +1,17 @@
+{
+    "go.goroot": "D:\\env\\go_sdk\\go1.23.6",
+    "go.gopath": "D:\\code\\go",
+    "go.toolsGopath": "D:\\code\\go",
+    "go.gocodeAutoBuild": true,
+    "go.useLanguageServer": true,
+    "go.alternateTools": {
+        "go": "D:\\env\\go_sdk\\go1.23.6\\bin\\go.exe"
+    },
+    "go.toolsEnvVars": {
+        "GOROOT": "D:\\env\\go_sdk\\go1.23.6",
+        "GOPATH": "D:\\code\\go",
+        "GOPROXY": "https://goproxy.cn,direct",
+        "GOSUMDB": "sum.golang.google.cn",
+        "GO111MODULE": "on"
+    }
+}
