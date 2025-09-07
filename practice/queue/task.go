@@ -1,4 +1,4 @@
-package task_queue
+package queue
 
 import (
 	"fmt"
@@ -15,4 +15,22 @@ type Task struct {
 
 func (t *Task) getTaskKey() string {
 	return fmt.Sprintf("task:%s", t.ID)
+}
+
+func ProgressTask(task *Task) {
+	fmt.Printf("任务%s 处理中 \n", task.ID)
+}
+
+func CreateTask(mark string, count int) []Task {
+	tasks := []Task{}
+	for i := 0; i < count; i++ {
+		tasks = append(tasks, Task{
+			ID:       fmt.Sprintf("task_%s_%d", mark, i),
+			Type:     "test",
+			Payload:  map[string]interface{}{"test01": "test01", "test02": "test02"},
+			MaxRetry: 3,
+			Created:  time.Now(),
+		})
+	}
+	return tasks
 }
