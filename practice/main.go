@@ -5,6 +5,7 @@ import (
 	"fmt"
 	queue "practice/queue"
 	"practice/scheduler"
+	"practice/taskstruct"
 	"time"
 
 	"practice/redisengine"
@@ -40,7 +41,7 @@ func main() {
 
 }
 
-func test_queue(engine *redisengine.RedisEngine, task *queue.Task) {
+func test_queue(engine *redisengine.RedisEngine, task *taskstruct.Task) {
 	queue_name := "queue_test"
 
 	queue := queue.NewQueue(queue_name, engine)
@@ -62,7 +63,7 @@ func test_queue(engine *redisengine.RedisEngine, task *queue.Task) {
 	fmt.Println("出队任务:", task)
 }
 
-func test_deplay_queue(engine *redisengine.RedisEngine, task *queue.Task) {
+func test_deplay_queue(engine *redisengine.RedisEngine, task *taskstruct.Task) {
 	queue_name := "delay_queue_test"
 
 	queue := queue.NewDelayQueue(queue_name, engine, time.Second*10)
@@ -91,8 +92,8 @@ func test_scheduler(engine *redisengine.RedisEngine) {
 	queue_1 := queue.NewQueue("queue_1", engine)
 	queue_2 := queue.NewQueue("queue_2", engine)
 
-	tasks_1 := queue.CreateTask("priority=1", 3)
-	tasks_2 := queue.CreateTask("priority=2", 3)
+	tasks_1 := taskstruct.CreateTask("priority=1", 3)
+	tasks_2 := taskstruct.CreateTask("priority=2", 3)
 
 	for _, test_task := range tasks_1 {
 		err := queue_1.EnqueueTask(ctx, &test_task)
@@ -127,7 +128,7 @@ func test_scheduler(engine *redisengine.RedisEngine) {
 			fmt.Println("获取任务失败:", err)
 			return
 		}
-		queue.ProgressTask(task)
+		task.ProgressTask()
 	}
 
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"practice/queue"
 	"practice/redisengine"
+	"practice/taskstruct"
 	"strconv"
 )
 
@@ -47,7 +48,7 @@ func NewPriorityScheduler(mode SchedulerMode, name string, redisEngine *rediseng
 	}
 }
 
-func (ps *PriorityScheduler) GetTask(ctx context.Context) (*queue.Task, error) {
+func (ps *PriorityScheduler) GetTask(ctx context.Context) (*taskstruct.Task, error) {
 	switch ps.mode {
 	case SchedulerWeight:
 		return ps.getTaskByWeight(ctx)
@@ -57,7 +58,7 @@ func (ps *PriorityScheduler) GetTask(ctx context.Context) (*queue.Task, error) {
 	return nil, fmt.Errorf("无效模式 %s", ps.mode)
 }
 
-func (ps *PriorityScheduler) getTaskByPriority(ctx context.Context) (*queue.Task, error) {
+func (ps *PriorityScheduler) getTaskByPriority(ctx context.Context) (*taskstruct.Task, error) {
 	queueKeys, err := ps.redisEngine.ZRevRangeByScore(ctx, ps.getSchedulerKey(), "+inf", "-inf", 0, -1)
 	if err != nil {
 		return nil, err
@@ -119,7 +120,7 @@ func (ps *PriorityScheduler) getWeightKey() string {
 }
 
 // 加权轮询算法获取任务
-func (ps *PriorityScheduler) getTaskByWeight(ctx context.Context) (*queue.Task, error) {
+func (ps *PriorityScheduler) getTaskByWeight(ctx context.Context) (*taskstruct.Task, error) {
 	weightKey := ps.getWeightKey()
 
 	fieldIncrements := make(map[string]int64)
@@ -192,7 +193,7 @@ func (ps *PriorityScheduler) selectMaxWeightQueue(currentWeights map[string]stri
 	return selectedQueue, nil
 }
 
-func (ps *PriorityScheduler) fallbackToOtherQueues(ctx context.Context, excludeQueue string) (*queue.Task, error) {
+func (ps *PriorityScheduler) fallbackToOtherQueues(ctx context.Context, excludeQueue string) (*taskstruct.Task, error) {
 	weightKey := ps.getWeightKey()
 	currentWeights, err := ps.redisEngine.HGetAll(ctx, weightKey)
 	if err != nil {

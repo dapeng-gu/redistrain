@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"practice/redisengine"
 	"practice/taskstruct"
 	"sync"
@@ -12,33 +13,53 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type DelayQueue struct {
+type RetryQueue struct {
 	Queue
-	DelayDuration time.Duration
-	mutex         *sync.Mutex
+	baseDelay time.Duration
+	maxDelay  time.Duration
+	maxRetry  int
+	deadQueue *DeadQueue
+	mutex     sync.Mutex
 }
 
-func NewDelayQueue(name string, redisEngine *redisengine.RedisEngine, delayDuration time.Duration) *DelayQueue {
+func NewRetryQueue(name string, redisEngine *redisengine.RedisEngine, delayDuration time.Duration, maxDelay time.Duration, maxRetry int) *RetryQueue {
 	queue := Queue{
 		name:          name,
 		redisEngine:   redisEngine,
-		queue_type:    "delay_queue",
+		queue_type:    "retry_queue",
 		enqueueScript: delayEnqueueScript,
 		dequeueScript: dequeueScript,
 	}
 
-	return &DelayQueue{
-		Queue:         queue,
-		DelayDuration: delayDuration,
-		mutex:         &sync.Mutex{},
+	return &RetryQueue{
+		Queue:     queue,
+		baseDelay: delayDuration,
+		maxDelay:  maxDelay,
+		maxRetry:  maxRetry,
+		deadQueue: NewDeadQueue("dead_queue", redisEngine),
 	}
 }
 
-func (q *DelayQueue) getQueueKey() string {
+func (q *RetryQueue) getQueueKey() string {
 	return fmt.Sprintf("%s:%s", q.queue_type, q.name)
 }
 
-func (q *DelayQueue) EnqueueTask(ctx context.Context, task *taskstruct.Task) error {
+func (q *RetryQueue) EnqueueTask(ctx context.Context, task *taskstruct.Task) error {
+	task.Retry++
+	if task.Retry > q.maxRetry {
+		task.Status = taskstruct.TaskStatusDeadLetter
+		return q.deadQueue.EnqueueTask(ctx, task)
+	}
+	task.Status = taskstruct.TaskStatusRetrying
+
+	// 修正版本
+	exponentialDelay := q.baseDelay * time.Duration(1<<uint(task.Retry))
+	jitter := time.Duration(rand.Intn(int(exponentialDelay / 4)))
+	delayDuration := exponentialDelay + jitter
+	if delayDuration > q.maxDelay {
+		delayDuration = q.maxDelay
+	}
+
 	taskKey := task.GetTaskKey()
 	queueKey := q.getQueueKey()
 
@@ -46,7 +67,7 @@ func (q *DelayQueue) EnqueueTask(ctx context.Context, task *taskstruct.Task) err
 	if err != nil {
 		return fmt.Errorf("序列化任务失败: %w", err)
 	}
-	result, err := q.redisEngine.RunScript(ctx, q.enqueueScript, []string{q.redisEngine.GetName(), queueKey}, taskKey, taskData, task.Created.Add(q.DelayDuration).UnixMilli(), task.ID)
+	result, err := q.redisEngine.RunScript(ctx, q.enqueueScript, []string{q.redisEngine.GetName(), queueKey}, taskKey, taskData, task.Created.Add(delayDuration).UnixMilli(), task.ID)
 	if err != nil {
 		return fmt.Errorf("任务入队失败: %w", err)
 	}
@@ -59,7 +80,7 @@ func (q *DelayQueue) EnqueueTask(ctx context.Context, task *taskstruct.Task) err
 	return nil
 }
 
-func (q *DelayQueue) DequeueTask(ctx context.Context) (*taskstruct.Task, error) {
+func (q *RetryQueue) DequeueTask(ctx context.Context) (*taskstruct.Task, error) {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 

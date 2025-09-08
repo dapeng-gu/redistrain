@@ -12,7 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type Queue struct {
+type DeadQueue struct {
 	name          string
 	redisEngine   *redisengine.RedisEngine
 	queue_type    string
@@ -20,21 +20,24 @@ type Queue struct {
 	dequeueScript *redis.Script
 }
 
-func NewQueue(name string, redisEngine *redisengine.RedisEngine) *Queue {
-	return &Queue{
+func NewDeadQueue(name string, redisEngine *redisengine.RedisEngine) *DeadQueue {
+	return &DeadQueue{
 		name:          name,
 		redisEngine:   redisEngine,
-		queue_type:    "queue",
+		queue_type:    "dead_queue",
 		enqueueScript: enqueueScript,
 		dequeueScript: dequeueScript,
 	}
 }
 
-func (q *Queue) GetQueueKey() string {
+func (q *DeadQueue) GetQueueKey() string {
 	return fmt.Sprintf("%s:%s", q.queue_type, q.name)
 }
 
-func (q *Queue) EnqueueTask(ctx context.Context, task *taskstruct.Task) error {
+func (q *DeadQueue) EnqueueTask(ctx context.Context, task *taskstruct.Task) error {
+
+	task.Status = taskstruct.TaskStatusDeadLetter
+
 	taskKey := task.GetTaskKey()
 	queueKey := q.GetQueueKey()
 
@@ -56,7 +59,7 @@ func (q *Queue) EnqueueTask(ctx context.Context, task *taskstruct.Task) error {
 	return nil
 }
 
-func (q *Queue) DequeueTask(ctx context.Context) (*taskstruct.Task, error) {
+func (q *DeadQueue) DequeueTask(ctx context.Context) (*taskstruct.Task, error) {
 	taskID, err := q.redisEngine.RPop(ctx, q.GetQueueKey())
 	if err != nil {
 		if err == redis.Nil {
