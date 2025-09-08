@@ -1,9 +1,12 @@
-package task_queue
+package queue
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"practice/redisengine"
+	"practice/taskstruct"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -12,12 +15,13 @@ import (
 type DelayQueue struct {
 	Queue
 	DelayDuration time.Duration
+	mutex         *sync.Mutex
 }
 
-func NewDelayQueue(name string, engine *QueueEngine, delayDuration time.Duration) *DelayQueue {
+func NewDelayQueue(name string, redisEngine *redisengine.RedisEngine, delayDuration time.Duration) *DelayQueue {
 	queue := Queue{
 		name:          name,
-		engine:        engine,
+		redisEngine:   redisEngine,
 		queue_type:    "delay_queue",
 		enqueueScript: delayEnqueueScript,
 		dequeueScript: dequeueScript,
@@ -26,6 +30,7 @@ func NewDelayQueue(name string, engine *QueueEngine, delayDuration time.Duration
 	return &DelayQueue{
 		Queue:         queue,
 		DelayDuration: delayDuration,
+		mutex:         &sync.Mutex{},
 	}
 }
 
@@ -33,16 +38,15 @@ func (q *DelayQueue) getQueueKey() string {
 	return fmt.Sprintf("%s:%s", q.queue_type, q.name)
 }
 
-func (q *DelayQueue) EnqueueTask(ctx context.Context, task *Task) error {
-	taskKey := task.getTaskKey()
+func (q *DelayQueue) EnqueueTask(ctx context.Context, task *taskstruct.Task) error {
+	taskKey := task.GetTaskKey()
 	queueKey := q.getQueueKey()
 
 	taskData, err := json.Marshal(task)
 	if err != nil {
 		return fmt.Errorf("序列化任务失败: %w", err)
 	}
-
-	result, err := q.enqueueScript.Run(ctx, q.engine.client, []string{q.engine.GetName(), queueKey}, taskKey, taskData, task.Created.Add(q.DelayDuration).UnixMilli(), task.ID).Result()
+	result, err := q.redisEngine.RunScript(ctx, q.enqueueScript, []string{q.redisEngine.GetName(), queueKey}, taskKey, taskData, task.Created.Add(q.DelayDuration).UnixMilli(), task.ID)
 	if err != nil {
 		return fmt.Errorf("任务入队失败: %w", err)
 	}
@@ -55,14 +59,12 @@ func (q *DelayQueue) EnqueueTask(ctx context.Context, task *Task) error {
 	return nil
 }
 
-func (q *DelayQueue) DequeueTask(ctx context.Context) (*Task, error) {
+func (q *DelayQueue) DequeueTask(ctx context.Context) (*taskstruct.Task, error) {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+
 	currentTime := time.Now().UnixMilli()
-	taskID, err := q.engine.client.ZRangeByScore(ctx, q.getQueueKey(), &redis.ZRangeBy{
-		Min:    "-inf",
-		Max:    fmt.Sprintf("%d", currentTime),
-		Offset: 0,
-		Count:  1,
-	}).Result()
+	taskID, err := q.redisEngine.ZRangeByScore(ctx, q.getQueueKey(), "-inf", fmt.Sprintf("%d", currentTime), 0, 1)
 	if err != nil {
 		if err == redis.Nil {
 			fmt.Printf("%s 没有就绪任务\n", q.getQueueKey())
@@ -75,11 +77,11 @@ func (q *DelayQueue) DequeueTask(ctx context.Context) (*Task, error) {
 		return nil, nil
 	}
 
-	task := Task{ID: taskID[0]}
+	task := taskstruct.Task{ID: taskID[0]}
 
-	taskKey := task.getTaskKey()
+	taskKey := task.GetTaskKey()
 
-	taskData, err := q.dequeueScript.Run(ctx, q.engine.client, []string{q.engine.GetName()}, taskKey).Result()
+	taskData, err := q.redisEngine.RunScript(ctx, q.dequeueScript, []string{q.redisEngine.GetName()}, taskKey)
 	if err != nil {
 		if err == redis.Nil {
 			fmt.Printf("%s 没有找到任务\n", taskKey)
