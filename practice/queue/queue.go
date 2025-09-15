@@ -13,11 +13,15 @@ import (
 )
 
 type Queue struct {
-	name          string
-	redisEngine   *redisengine.RedisEngine
-	queue_type    string
-	enqueueScript *redis.Script
-	dequeueScript *redis.Script
+	name                           string
+	redisEngine                    *redisengine.RedisEngine
+	queue_type                     string
+	enqueueScript                  *redis.Script
+	dequeueScript                  *redis.Script
+	enableDeduplication            bool
+	deduplicationTTL               int
+	enqueueWithDeduplicationScript *redis.Script
+	aggregator                     *Aggregator
 }
 
 func NewQueue(name string, redisEngine *redisengine.RedisEngine) *Queue {
@@ -27,6 +31,21 @@ func NewQueue(name string, redisEngine *redisengine.RedisEngine) *Queue {
 		queue_type:    "queue",
 		enqueueScript: enqueueScript,
 		dequeueScript: dequeueScript,
+		aggregator:    NewAggregator(redisEngine, name),
+	}
+}
+
+func NewQueueWithDeduplication(name string, redisEngine *redisengine.RedisEngine, ttl int) *Queue {
+	return &Queue{
+		name:                           name,
+		redisEngine:                    redisEngine,
+		queue_type:                     "queue",
+		enqueueScript:                  enqueueScript,
+		dequeueScript:                  dequeueScript,
+		enableDeduplication:            true,
+		deduplicationTTL:               ttl,
+		enqueueWithDeduplicationScript: enqueueWithDeduplicationScript,
+		aggregator:                     NewAggregator(redisEngine, name),
 	}
 }
 
@@ -43,14 +62,55 @@ func (q *Queue) EnqueueTask(ctx context.Context, task *taskstruct.Task) error {
 		return fmt.Errorf("序列化任务失败: %w", err)
 	}
 
-	result, err := q.redisEngine.RunScript(ctx, q.enqueueScript, []string{q.redisEngine.GetName(), queueKey}, taskKey, taskData, task.ID)
-	if err != nil {
-		return fmt.Errorf("任务入队失败: %w", err)
+	if q.enableDeduplication {
+		deduplicationKey := task.GetDeduplicationKey()
+		result, err := q.redisEngine.RunScript(ctx, q.enqueueWithDeduplicationScript,
+			[]string{q.redisEngine.GetName(), queueKey, deduplicationKey},
+			taskKey, taskData, task.ID, q.deduplicationTTL)
+		if err != nil {
+			return fmt.Errorf("任务入队失败: %w", err)
+		}
+
+		switch result.(int64) {
+		case 0:
+			fmt.Printf("任务入队失败，任务已存在: %s\n", task.ID)
+			return nil
+		case -1:
+			fmt.Printf("任务入队失败，相同任务正在处理中（去重）: %s\n", task.ID)
+			return nil
+		case 1:
+			fmt.Printf("任务成功入队（已设置去重键）: %s\n", task.ID)
+			return nil
+		}
+	} else {
+		result, err := q.redisEngine.RunScript(ctx, q.enqueueScript, []string{q.redisEngine.GetName(), queueKey}, taskKey, taskData, task.ID)
+		if err != nil {
+			return fmt.Errorf("任务入队失败: %w", err)
+		}
+
+		if result.(int64) == 0 {
+			fmt.Printf("任务入队失败，任务已存在: %s\n", task.ID)
+			return nil
+		}
 	}
 
-	if result.(int64) == 0 {
-		fmt.Println("任务入队失败，任务已存在: ", task.ID)
-		return nil
+	return nil
+}
+
+// EnqueueGroupedTask 入队支持聚合的任务
+func (q *Queue) EnqueueGroupedTask(ctx context.Context, task *taskstruct.Task) error {
+	if task.GroupKey == "" {
+		return q.EnqueueTask(ctx, task)
+	}
+
+	aggregatedTask, err := q.aggregator.AddTaskToGroup(ctx, task)
+	if err != nil {
+		return fmt.Errorf("聚合任务失败: %w", err)
+	}
+
+	// 如果返回了聚合任务，说明触发了批处理
+	if aggregatedTask != nil {
+		return q.EnqueueTask(ctx, aggregatedTask)
 	}
 
 	return nil
