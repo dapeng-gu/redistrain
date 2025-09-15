@@ -27,6 +27,10 @@ func (engine *RedisEngine) RunScript(ctx context.Context, script *redis.Script, 
 	return script.Run(ctx, engine.client, keys, args).Result()
 }
 
+func (engine *RedisEngine) Exists(ctx context.Context, keys ...string) (int64, error) {
+	return engine.client.Exists(ctx, keys...).Result()
+}
+
 // ZSet操作方法
 func (engine *RedisEngine) ZAdd(ctx context.Context, key string, score float64, member string) error {
 	return engine.client.ZAdd(ctx, key, redis.Z{
